@@ -245,6 +245,14 @@ my $userhost;
 my @command;
 my @bind_arguments;
 
+# Let OpenSSH use the host's ProxyCommand; only the remote relay needs UDP.
+if ( defined $ssh_relay ) {
+  die "$0: --ssh-relay requires a remote host.\n" if defined $localhost;
+  $use_remote_ip = 'remote';
+  $bind_ip = '127.0.0.1';
+}
+
+
 if ( ! defined $fake_proxy ) {
   if ( scalar @ARGV < 1 ) {
     die $usage;
