@@ -115,6 +115,15 @@ OpenSSH command to remotely execute mosh-server on remote machine (default: "ssh
 An alternate ssh port can be specified with, \fIe.g.\fP, \-\-ssh="ssh \-p 2222".
 
 .TP
+.B \-\-ssh-relay=\fIPATH\fP
+Carry Mosh traffic through SSH, including the host's ProxyCommand or ProxyJump.
+PATH names the remote mosh-ssh-relay executable. Both ends require Python 3.
+The server binds to loopback and needs no public UDP port. If the SSH transport
+drops, the client opens a new SSH connection to the same Mosh session.
+Reconnects require noninteractive SSH authentication. TCP retransmission can
+delay screen updates while a connection is lossy.
+
+.TP
 .B \-\-ssh-pty\fP
 .B \-\-no-ssh-pty\fP
 Enable or disable ssh's use of a pty when connecting to a remote host.

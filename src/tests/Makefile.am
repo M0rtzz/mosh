@@ -38,8 +38,8 @@ displaytests = \
 	unicode-later-combining.test \
 	window-resize.test
 
-check_PROGRAMS = ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale
-TESTS = ocb-aes encrypt-decrypt base64 nonce-incr local.test $(displaytests)
+check_PROGRAMS = terminal-sync ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale
+TESTS = terminal-sync ocb-aes encrypt-decrypt base64 nonce-incr local.test $(displaytests)
 XFAIL_TESTS = \
 	e2e-failure.test \
 	emulation-attributes-256color8.test
@@ -78,3 +78,8 @@ clean-local-check:
 	-for i in $(displaytests); do rm -rf $$i.d/; done
 
 CLEANFILES = base64_vector.cc
+
+
+terminal_sync_SOURCES = terminal-sync.cc
+terminal_sync_CPPFLAGS = -I$(srcdir)/../statesync -I$(srcdir)/../terminal -I$(srcdir)/../util
+terminal_sync_LDADD = ../statesync/libmoshstatesync.a ../terminal/libmoshterminal.a ../util/libmoshutil.a ../protobufs/libmoshprotos.a $(TINFO_LIBS) $(protobuf_LIBS)

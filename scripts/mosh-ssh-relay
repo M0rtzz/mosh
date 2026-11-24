@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Carry loopback Mosh datagrams as length-prefixed records over SSH."""
+
+import os
+import select
+import shlex
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+LOOPBACK = "127.0.0.1"
+LENGTH = struct.Struct("!H")
+
+
+def bridge(udp, reader, writer, running, first=b""):
+    """Forward complete datagrams in both directions; bound the outbound queue."""
+    incoming = bytearray()
+    outgoing = LENGTH.pack(len(first)) + first if first else b""
+    os.set_blocking(writer.fileno(), False)
+    while running():
+        readable, writable, _ = select.select(
+            [reader] if outgoing else [reader, udp], [writer] if outgoing else [], [], 0.5
+        )
+        if reader in readable:
+            chunk = os.read(reader.fileno(), 65536)
+            if not chunk:
+                return
+            incoming.extend(chunk)
+            while len(incoming) >= LENGTH.size:
+                size = LENGTH.unpack_from(incoming)[0]
+                end = LENGTH.size + size
+                if len(incoming) < end:
+                    break
+                udp.send(incoming[LENGTH.size:end])
+                del incoming[:end]
+        if writer in writable:
+            outgoing = outgoing[os.write(writer.fileno(), outgoing):]
+        if udp in readable:
+            packet = udp.recv(65535)
+            outgoing = LENGTH.pack(len(packet)) + packet
+
+
+def stop(process):
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+
+def client(udp, executable, port, host, remote_helper, ssh):
+    udp.bind((LOOPBACK, 0))
+    terminal = subprocess.Popen([executable, LOOPBACK, str(udp.getsockname()[1])])
+    transport_env = os.environ.copy()
+    transport_env.pop("MOSH_KEY", None)
+    remote = shlex.quote(remote_helper) + " server " + str(port)
+    command = ssh + ["-T", "-o", "BatchMode=yes", "-o", "ControlPath=none",
+                     "-o", "ClearAllForwardings=yes", "-o", "ServerAliveInterval=5",
+                     "-o", "ServerAliveCountMax=3", "--", host, remote]
+    try:
+        while terminal.poll() is None:
+            if select.select([udp], [], [], 0.25)[0]:
+                first, peer = udp.recvfrom(65535)
+                udp.connect(peer)
+                break
+        while terminal.poll() is None:
+            with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, env=transport_env) as link:
+                try:
+                    bridge(udp, link.stdout, link.stdin, lambda: terminal.poll() is None, first)
+                except (BrokenPipeError, ConnectionRefusedError, ConnectionResetError):
+                    pass
+                finally:
+                    link.stdin.close()
+                    if terminal.poll() is not None:
+                        stop(link)
+                try:
+                    status = link.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    stop(link)
+                    status = 255
+            if status in (126, 127):
+                raise SystemExit("Cannot execute the remote Mosh SSH relay")
+            first = b""
+            if terminal.poll() is None:
+                time.sleep(1)
+        return terminal.returncode
+    finally:
+        stop(terminal)
+
+
+def main():
+    def shutdown(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, shutdown)
+    args = sys.argv[1:]
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        if len(args) == 2 and args[0] == "server":
+            udp.connect((LOOPBACK, int(args[1])))
+            try:
+                bridge(udp, sys.stdin.buffer, sys.stdout.buffer, lambda: True)
+            except (BrokenPipeError, ConnectionRefusedError, ConnectionResetError):
+                pass
+            return 0
+        if len(args) >= 6 and args[0] == "client":
+            return client(udp, args[1], int(args[2]), args[3], args[4], args[5:])
+    raise SystemExit("Use this helper via mosh --ssh-relay=PATH")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

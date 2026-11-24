@@ -35,6 +35,7 @@ use 5.8.8;
 use warnings;
 use strict;
 use Getopt::Long;
+use FindBin;
 use IO::Socket;
 use Text::ParseWords;
 use Socket qw(IPPROTO_TCP);
@@ -63,6 +64,7 @@ $|=1;
 
 my $client = 'mosh-client';
 my $server = 'mosh-server';
+my $ssh_relay;
 
 my $predict = undef;
 
@@ -118,6 +120,9 @@ qq{Usage: $0 [options] [--] [user@]host [command...]
                                 (example: "ssh -p 2222")
                                 (default: "ssh")
 
+        --ssh-relay=PATH     carry Mosh packets over reconnecting SSH;
+                                PATH is the remote mosh-ssh-relay executable
+
         --no-ssh-pty         do not allocate a pseudo tty on ssh connection
 
         --no-init            do not send terminal initialization string
@@ -152,7 +157,8 @@ sub predict_check {
   }
 }
 
-GetOptions( 'client=s' => \$client,
+GetOptions( 'ssh-relay=s' => \$ssh_relay,
+            'client=s' => \$client,
 	    'server=s' => \$server,
 	    'predict=s' => \$predict,
 	    'predict-overwrite|o!' => \$overwrite,
@@ -331,7 +337,7 @@ $ENV{ 'MOSH_CLIENT_PID' } = $$; # We don't support this, but it's useful for tes
 
 # If we are using a locally-resolved address, we have to get it before we fork,
 # so both parent and child get it.
-my $ip;
+my $ip = defined $ssh_relay ? '127.0.0.1' : undef;
 if ( $use_remote_ip eq 'local' ) {
   # "parse" the host from what the user gave us
   my ($user, $host) = $userhost =~ /^((?:.*@)?)(.*)$/;
@@ -462,6 +468,11 @@ if ( $pid == 0 ) { # child
   $ENV{ 'MOSH_KEY' } = $key;
   $ENV{ 'MOSH_PREDICTION_DISPLAY' } = $predict;
   $ENV{ 'MOSH_NO_TERM_INIT' } = '1' if !$term_init;
+  if ( defined $ssh_relay ) {
+    my $helper = "$FindBin::RealBin/mosh-ssh-relay";
+    exec {$helper} ($helper, 'client', $client, $port, $userhost, $ssh_relay, @ssh)
+      or die "Cannot start SSH relay $helper: $!\n";
+  }
   exec {$client} ("$client", "-# @cmdline |", $ip, $port);
 }
 

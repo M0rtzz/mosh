@@ -591,13 +591,19 @@ static Function func_CSI_DECSTR( CSI, "!p", CSI_DECSTR );
 /* xterm uses an Operating System Command to set the window title */
 void Dispatcher::OSC_dispatch( const Parser::OSC_End *act __attribute((unused)), Framebuffer *fb )
 {
-  /* handle osc copy clipboard sequence 52;c; */
-  if ( OSC_string.size() >= 5 && OSC_string[ 0 ] == L'5' &&
-       OSC_string[ 1 ] == L'2' && OSC_string[ 2 ] == L';' &&
-       OSC_string[ 3 ] == L'c' && OSC_string[ 4 ] == L';') {
-      Terminal::Framebuffer::title_type clipboard(
-              OSC_string.begin() + 5, OSC_string.end() );
-      fb->set_clipboard( clipboard );
+  // tmux can write to the default clipboard with OSC 52 ;; instead of 52 ;c;.
+  if ( OSC_string.size() >= 4 && OSC_string[0] == L'5' &&
+       OSC_string[1] == L'2' && OSC_string[2] == L';' ) {
+    size_t start = 3;
+    if ( OSC_string[start] == L'c' ) ++start;
+    if ( start < OSC_string.size() && OSC_string[start] == L';' ) {
+      ++start;
+      // Only forward writes. A question mark requests a clipboard read.
+      if ( start == OSC_string.size() || OSC_string[start] != L'?' ) {
+        fb->set_clipboard( Terminal::Framebuffer::title_type(
+              OSC_string.begin() + start, OSC_string.end() ) );
+      }
+    }
   /* handle osc terminal title sequence */
   } else if ( OSC_string.size() >= 1 ) {
     long cmd_num = -1;

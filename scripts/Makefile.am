@@ -1,4 +1,5 @@
 EXTRA_DIST = wrap-compiler-for-flag-check mosh.pl
+dist_bin_SCRIPTS = mosh-ssh-relay
 if BUILD_CLIENT
   bin_SCRIPTS = mosh
 endif
