@@ -40,6 +40,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <assert.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <unistd.h>
@@ -422,7 +423,8 @@ void Connection::send( const string & s )
     }
   } else { /* client */
     if ( ( now - last_port_choice > PORT_HOP_INTERVAL )
-	 && ( now - last_roundtrip_success > PORT_HOP_INTERVAL ) ) {
+	 && ( now - last_roundtrip_success > PORT_HOP_INTERVAL )
+	 && getenv( "MOSH_FIXED_LOCAL_PORT" ) == NULL ) {
       hop_port();
     }
   }

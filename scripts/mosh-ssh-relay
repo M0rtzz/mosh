@@ -55,7 +55,10 @@ def stop(process):
 
 def client(udp, executable, port, host, remote_helper, ssh):
     udp.bind((LOOPBACK, 0))
-    terminal = subprocess.Popen([executable, LOOPBACK, str(udp.getsockname()[1])])
+    # The relay pins its loopback socket to the client's source port. Only the
+    # outer SSH transport roams; a local port hop would strand the session.
+    terminal = subprocess.Popen([executable, LOOPBACK, str(udp.getsockname()[1])],
+                                env=dict(os.environ, MOSH_FIXED_LOCAL_PORT="1"))
     transport_env = os.environ.copy()
     transport_env.pop("MOSH_KEY", None)
     remote = shlex.quote(remote_helper) + " server " + str(port)
