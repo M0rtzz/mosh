@@ -74,7 +74,7 @@ void STMClient::resume( void )
   }
 
   /* Put terminal in application-cursor-key mode */
-  swrite( STDOUT_FILENO, display.open().c_str() );
+  if ( !native_scrollback ) { swrite( STDOUT_FILENO, display.open().c_str() ); }
 
   /* Flag that outer terminal state is unknown */
   repaint_requested = true;
@@ -119,7 +119,7 @@ void STMClient::init( void )
   }
 
   /* Put terminal in application-cursor-key mode */
-  swrite( STDOUT_FILENO, display.open().c_str() );
+  if ( !native_scrollback ) { swrite( STDOUT_FILENO, display.open().c_str() ); }
 
   /* Add our name to window title */
   if ( !getenv( "MOSH_TITLE_NOPREFIX" ) ) {
@@ -207,6 +207,11 @@ void STMClient::shutdown( void )
   output_new_frame();
 
   /* Restore terminal and terminal-driver state */
+  if ( native_scrollback ) {
+    // A foreground application owns terminal modes. On forced exit it may
+    // not have had a chance to restore the primary screen or disable the mouse.
+    swrite( STDOUT_FILENO, "\033[?1049l\033[?2004l\033[?1004l" );
+  }
   swrite( STDOUT_FILENO, display.close().c_str() );
   
   if ( tcsetattr( STDIN_FILENO, TCSANOW, &saved_termios ) < 0 ) {
@@ -246,12 +251,14 @@ void STMClient::main_init( void )
   new_state = Terminal::Framebuffer( 1, 1 );
 
   /* initialize screen */
-  string init = display.new_frame( false, local_framebuffer, local_framebuffer );
-  swrite( STDOUT_FILENO, init.data(), init.size() );
+  if ( !native_scrollback ) {
+    string init = display.new_frame( false, local_framebuffer, local_framebuffer );
+    swrite( STDOUT_FILENO, init.data(), init.size() );
+  }
 
   /* open network */
   Network::UserStream blank;
-  Terminal::Complete local_terminal( window_size.ws_col, window_size.ws_row );
+  Terminal::Complete local_terminal( window_size.ws_col, window_size.ws_row, native_scrollback );
   network = NetworkPointer( new NetworkType( blank, local_terminal, key.c_str(), ip.c_str(), port.c_str() ) );
 
   network->set_send_delay( 1 ); /* minimal delay on outgoing keystrokes */
@@ -266,7 +273,7 @@ void STMClient::main_init( void )
 
 void STMClient::output_new_frame( void )
 {
-  if ( !network ) { /* clean shutdown even when not initialized */
+  if ( !network || native_scrollback ) {
     return;
   }
 
@@ -290,6 +297,11 @@ void STMClient::output_new_frame( void )
 void STMClient::process_network_input( void )
 {
   network->recv();
+  if ( native_scrollback ) {
+    const string bytes = network->get_remote_diff();
+    swrite( STDOUT_FILENO, bytes.data(), bytes.size() );
+    return;
+  }
   
   /* Now give hints to the overlays */
   overlays.get_notification_engine().server_heard( network->get_latest_remote_state().timestamp );
@@ -330,7 +342,7 @@ bool STMClient::process_user_input( int fd )
   for ( int i = 0; i < bytes_read; i++ ) {
     char the_byte = buf[ i ];
 
-    if ( !paste ) {
+    if ( !native_scrollback && !paste ) {
       overlays.get_prediction_engine().new_user_byte( the_byte, local_framebuffer );
     }
 
@@ -441,7 +453,7 @@ bool STMClient::main( void )
     try {
       output_new_frame();
 
-      int wait_time = std::min( network->wait_time(), overlays.wait_time() );
+      int wait_time = native_scrollback ? network->wait_time() : std::min( network->wait_time(), overlays.wait_time() );
 
       /* Handle startup "Connecting..." message */
       if ( still_connecting() ) {

@@ -56,12 +56,16 @@ namespace Terminal {
     typedef std::list< std::pair<uint64_t, uint64_t> > input_history_type;
     input_history_type input_history;
     uint64_t echo_ack;
+    bool stream_mode;
+    // SSP states share a common acknowledged prefix. Retain just the suffix.
+    std::string pending_output;
 
     static const int ECHO_TIMEOUT = 50; /* for late ack */
 
   public:
-    Complete( size_t width, size_t height ) : parser(), terminal( width, height ), display( false ),
-					      actions(), input_history(), echo_ack( 0 ) {}
+    Complete( size_t width, size_t height, bool stream = false ) : parser(), terminal( width, height ), display( false ),
+					      actions(), input_history(), echo_ack( 0 ),
+					      stream_mode( stream ), pending_output() {}
     
     std::string act( const std::string &str );
     std::string act( const Parser::Action &act );
@@ -74,7 +78,9 @@ namespace Terminal {
     int wait_time( uint64_t now ) const;
 
     /* interface for Network::Transport */
-    void subtract( const Complete * ) const {}
+    void subtract( const Complete *prefix );
+    bool native_scrollback() const { return stream_mode; }
+    size_t pending_bytes() const { return pending_output.size(); }
     std::string diff_from( const Complete &existing ) const;
     std::string init_diff( void ) const;
     void apply_string( const std::string & diff );

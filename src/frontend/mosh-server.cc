@@ -105,7 +105,7 @@ static void serve( int host_fd,
 
 static int run_server( const char *desired_ip, const char *desired_port,
 		       const string &command_path, char *command_argv[],
-		       const int colors, unsigned int verbose, bool with_motd );
+		       const int colors, unsigned int verbose, bool with_motd, bool native_scrollback );
 
 
 static void print_version( FILE *file )
@@ -119,7 +119,7 @@ static void print_version( FILE *file )
 
 static void print_usage( FILE *stream, const char *argv0 )
 {
-  fprintf( stream, "Usage: %s new [-s] [-v] [-i LOCALADDR] [-p PORT[:PORT2]] [-c COLORS] [-l NAME=VALUE] [-- COMMAND...]\n", argv0 );
+  fprintf( stream, "Usage: %s new [-s] [-S] [-v] [-i LOCALADDR] [-p PORT[:PORT2]] [-c COLORS] [-l NAME=VALUE] [-- COMMAND...]\n", argv0 );
 }
 
 static bool print_motd( const char *filename );
@@ -182,6 +182,7 @@ int main( int argc, char *argv[] )
   string command_path;
   char **command_argv = NULL;
   int colors = 0;
+  bool native_scrollback = false;
   unsigned int verbose = 0; /* don't close stdin/stdout/stderr */
   /* Will cause mosh-server not to correctly detach on old versions of sshd. */
   list<string> locale_vars;
@@ -210,7 +211,7 @@ int main( int argc, char *argv[] )
        && (strcmp( argv[ 1 ], "new" ) == 0) ) {
     /* new option syntax */
     int opt;
-    while ( (opt = getopt( argc - 1, argv + 1, "@:i:p:c:svl:" )) != -1 ) {
+    while ( (opt = getopt( argc - 1, argv + 1, "@:i:p:c:sSvl:" )) != -1 ) {
       switch ( opt ) {
 	/*
 	 * This undocumented option does nothing but eat its argument.
@@ -228,6 +229,9 @@ int main( int argc, char *argv[] )
       case 'p':
 	desired_port = optarg;
 	break;
+      case 'S':
+        native_scrollback = true;
+        break;
       case 's':
 	desired_ip = NULL;
 	desired_ip_str = get_SSH_IP();
@@ -364,7 +368,7 @@ int main( int argc, char *argv[] )
   }
 
   try {
-    return run_server( desired_ip, desired_port, command_path, command_argv, colors, verbose, with_motd );
+    return run_server( desired_ip, desired_port, command_path, command_argv, colors, verbose, with_motd, native_scrollback );
   } catch ( const Network::NetworkException &e ) {
     fprintf( stderr, "Network exception: %s\n",
 	     e.what() );
@@ -378,7 +382,7 @@ int main( int argc, char *argv[] )
 
 static int run_server( const char *desired_ip, const char *desired_port,
 		       const string &command_path, char *command_argv[],
-		       const int colors, unsigned int verbose, bool with_motd ) {
+		       const int colors, unsigned int verbose, bool with_motd, bool native_scrollback ) {
   /* get network idle timeout */
   long network_timeout = 0;
   char *timeout_envar = getenv( "MOSH_SERVER_NETWORK_TMOUT" );
@@ -420,7 +424,7 @@ static int run_server( const char *desired_ip, const char *desired_port,
   }
 
   /* open parser and terminal */
-  Terminal::Complete terminal( window_size.ws_col, window_size.ws_row );
+  Terminal::Complete terminal( window_size.ws_col, window_size.ws_row, native_scrollback );
 
   /* open network */
   Network::UserStream blank;
@@ -676,6 +680,8 @@ static void serve( int host_fd, Terminal::Complete &terminal, ServerConnection &
   #endif
 
   bool child_released = false;
+  const bool stream = terminal.native_scrollback();
+  bool host_eof = false;
 
   while ( true ) {
     try {
@@ -711,7 +717,11 @@ static void serve( int host_fd, Terminal::Complete &terminal, ServerConnection &
       assert( fd_list.size() == 1 ); /* servers don't hop */
       int network_fd = fd_list.back();
       sel.add_fd( network_fd );
-      if ( !network.shutdown_in_progress() ) {
+      // Backpressure the PTY while a disconnected client catches up. This
+      // bounds retransmissions and keeps even partial escape sequences intact.
+      const bool poll_host = !network.shutdown_in_progress()
+        && (!stream || (!host_eof && network.get_current_state().pending_bytes() < 64 * 1024));
+      if ( poll_host ) {
 	sel.add_fd( host_fd );
       }
 
@@ -761,16 +771,20 @@ static void serve( int host_fd, Terminal::Complete &terminal, ServerConnection &
 		network.start_shutdown();
 	      }
 	    }
-	    terminal_to_host += terminal.act( action );
+	    if ( !stream ) {
+	      terminal_to_host += terminal.act( action );
+	    } else if ( typeid( action ) == typeid( Parser::UserByte ) ) {
+	      terminal_to_host += static_cast<const Parser::UserByte &>( action ).c;
+	    }
 	  }
 
-	  if ( !us.empty() ) {
+	  if ( !stream && !us.empty() ) {
 	    /* register input frame number for future echo ack */
 	    terminal.register_input_frame( last_remote_num, now );
 	  }
 
 	  /* update client with new state of terminal */
-	  if ( !network.shutdown_in_progress() ) {
+	  if ( !stream && !network.shutdown_in_progress() ) {
 	    network.set_current_state( terminal );
 	  }
 	  #if defined(HAVE_SYSLOG) || defined(HAVE_UTEMPTER)
@@ -829,7 +843,7 @@ static void serve( int host_fd, Terminal::Complete &terminal, ServerConnection &
 	}
       }
       
-      if ( (!network.shutdown_in_progress()) && sel.read( host_fd ) ) {
+      if ( poll_host && !network.shutdown_in_progress() && sel.read( host_fd ) ) {
 	/* input from the host needs to be fed to the terminal */
 	const int buf_size = 16384;
 	char buf[ buf_size ];
@@ -840,13 +854,23 @@ static void serve( int host_fd, Terminal::Complete &terminal, ServerConnection &
         /* If the pty slave is closed, reading from the master can fail with
            EIO (see #264).  So we treat errors on read() like EOF. */
         if ( bytes_read <= 0 ) {
-	  network.start_shutdown();
+          if ( stream ) {
+            host_eof = true;
+          } else {
+            network.start_shutdown();
+          }
+        } else if ( stream ) {
+          network.get_current_state().apply_string( string( buf, bytes_read ) );
 	} else {
 	  terminal_to_host += terminal.act( string( buf, bytes_read ) );
 	
 	  /* update client with new state of terminal */
 	  network.set_current_state( terminal );
 	}
+      }
+
+      if ( host_eof && !network.shutdown_in_progress() && !network.get_current_state().pending_bytes() ) {
+        network.start_shutdown();
       }
 
       /* write user input and terminal writeback to the host */

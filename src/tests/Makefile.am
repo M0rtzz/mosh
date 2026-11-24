@@ -3,7 +3,7 @@ EXTRA_DIST = \
 	e2e-test e2e-test-server \
 	e2e-test-subrs \
 	mosh-client mosh-server \
-	local.test \
+	local.test native-scrollback.test \
 	$(displaytests) \
 	emulation-attributes.test
 
@@ -39,7 +39,7 @@ displaytests = \
 	window-resize.test
 
 check_PROGRAMS = terminal-sync ocb-aes encrypt-decrypt base64 nonce-incr inpty is-utf8-locale
-TESTS = terminal-sync ocb-aes encrypt-decrypt base64 nonce-incr local.test $(displaytests)
+TESTS = terminal-sync ocb-aes encrypt-decrypt base64 nonce-incr local.test native-scrollback.test $(displaytests)
 XFAIL_TESTS = \
 	e2e-failure.test \
 	emulation-attributes-256color8.test

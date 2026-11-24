@@ -53,11 +53,12 @@ def stop(process):
             process.wait()
 
 
-def client(udp, executable, port, host, remote_helper, ssh):
+def client(udp, executable, port, host, remote_helper, ssh, native_scrollback):
     udp.bind((LOOPBACK, 0))
     # The relay pins its loopback socket to the client's source port. Only the
     # outer SSH transport roams; a local port hop would strand the session.
-    terminal = subprocess.Popen([executable, LOOPBACK, str(udp.getsockname()[1])],
+    client_args = [executable] + (["-S"] if native_scrollback else [])
+    terminal = subprocess.Popen(client_args + [LOOPBACK, str(udp.getsockname()[1])],
                                 env=dict(os.environ, MOSH_FIXED_LOCAL_PORT="1"))
     transport_env = os.environ.copy()
     transport_env.pop("MOSH_KEY", None)
@@ -112,8 +113,8 @@ def main():
             except (BrokenPipeError, ConnectionRefusedError, ConnectionResetError):
                 pass
             return 0
-        if len(args) >= 6 and args[0] == "client":
-            return client(udp, args[1], int(args[2]), args[3], args[4], args[5:])
+        if len(args) >= 6 and args[0] in ("client", "stream-client"):
+            return client(udp, args[1], int(args[2]), args[3], args[4], args[5:], args[0] == "stream-client")
     raise SystemExit("Use this helper via mosh --ssh-relay=PATH")
 
 

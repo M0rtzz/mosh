@@ -1,0 +1,17 @@
+#!/bin/sh
+. "$(dirname "$0")/e2e-test-subrs"
+set_locale || exit 99
+set -eu
+
+# Generate more than one retransmission window before the shell exits. A
+# screen diff would lose lines; duplicate or missing bytes must fail the test.
+out=$(TERM=xterm ./inpty ../../scripts/mosh --native-scrollback \
+    --client="../frontend/mosh-client" --server="$PWD/../frontend/mosh-server" \
+    --local --bind-server=127.0.0.1 127.0.0.1 \
+    -- awk 'BEGIN { print ""; for (i = 1; i <= 6000; ++i) printf "scrollback-row-%06d\n", i }')
+printf '%s\n' "$out" | tr -d '\r' | awk '
+    /^scrollback-row-/ {
+        if ($0 != sprintf("scrollback-row-%06d", ++count)) bad = 1
+    }
+    END { exit (bad || count != 6000) }
+'

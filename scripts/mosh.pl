@@ -80,6 +80,7 @@ my $port_request = undef;
 my @ssh = ('ssh');
 
 my $term_init = 1;
+my $native_scrollback = 0;
 
 my $localhost = undef;
 
@@ -125,6 +126,7 @@ qq{Usage: $0 [options] [--] [user@]host [command...]
 
         --no-ssh-pty         do not allocate a pseudo tty on ssh connection
 
+        --native-scrollback  send terminal output in order for local scrollback
         --no-init            do not send terminal initialization string
 
         --local              run mosh-server locally without using ssh
@@ -172,6 +174,7 @@ GetOptions( 'ssh-relay=s' => \$ssh_relay,
 	    'ssh=s' => sub { @ssh = shellwords($_[1]); },
 	    'ssh-pty!' => \$ssh_pty,
 	    'init!' => \$term_init,
+            'native-scrollback' => \$native_scrollback,
 	    'local' => \$localhost,
 	    'help' => \$help,
 	    'version' => \$version,
@@ -389,6 +392,7 @@ if ( $pid == 0 ) { # child
     }
   }
   my @server = ( 'new' );
+  push @server, '-S' if $native_scrollback;
 
   push @server, ( '-c', $colors );
 
@@ -478,10 +482,12 @@ if ( $pid == 0 ) { # child
   $ENV{ 'MOSH_NO_TERM_INIT' } = '1' if !$term_init;
   if ( defined $ssh_relay ) {
     my $helper = "$FindBin::RealBin/mosh-ssh-relay";
-    exec {$helper} ($helper, 'client', $client, $port, $userhost, $ssh_relay, @ssh)
+    my $mode = $native_scrollback ? 'stream-client' : 'client';
+    exec {$helper} ($helper, $mode, $client, $port, $userhost, $ssh_relay, @ssh)
       or die "Cannot start SSH relay $helper: $!\n";
   }
-  exec {$client} ("$client", "-# @cmdline |", $ip, $port);
+  my @client_options = $native_scrollback ? ('-S') : ();
+  exec {$client} ("$client", "-# @cmdline |", @client_options, $ip, $port);
 }
 
 sub shell_quote { join ' ', map {(my $a = $_) =~ s/'/'\\''/g; "'$a'"} @_ }

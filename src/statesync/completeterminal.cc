@@ -68,9 +68,22 @@ string Complete::act( const Action &act )
   return terminal.read_octets_to_host();
 }
 
+/* Like UserStream, discard the prefix once both endpoints know it. */
+void Complete::subtract( const Complete *prefix )
+{
+  if ( stream_mode ) {
+    assert( prefix->pending_output.size() <= pending_output.size() );
+    pending_output.erase( 0, prefix->pending_output.size() );
+  }
+}
+
 /* interface for Network::Transport */
 string Complete::diff_from( const Complete &existing ) const
 {
+  if ( stream_mode ) {
+    return pending_output.substr( existing.pending_output.size() );
+  }
+
   HostBuffers::HostMessage output;
 
   if ( existing.get_echo_ack() != get_echo_ack() ) {
@@ -103,6 +116,11 @@ string Complete::init_diff( void ) const
 
 void Complete::apply_string( const string & diff )
 {
+  if ( stream_mode ) {
+    pending_output.append( diff );
+    return;
+  }
+
   HostBuffers::HostMessage input;
   fatal_assert( input.ParseFromString( diff ) );
 
@@ -123,6 +141,7 @@ void Complete::apply_string( const string & diff )
 
 bool Complete::operator==( Complete const &x ) const
 {
+  if ( stream_mode ) { return pending_output == x.pending_output; }
   //  assert( parser == x.parser ); /* parser state is irrelevant for us */
   return (terminal == x.terminal) && (echo_ack == x.echo_ack);
 }
@@ -182,6 +201,7 @@ int Complete::wait_time( uint64_t now ) const
 
 bool Complete::compare( const Complete &other ) const
 {
+  if ( stream_mode ) { return pending_output != other.pending_output; }
   bool ret = false;
   const Framebuffer &fb = terminal.get_fb();
   const Framebuffer &other_fb = other.terminal.get_fb();

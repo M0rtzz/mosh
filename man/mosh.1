@@ -233,6 +233,14 @@ With \-\-bind\-server=\fIIP\fP, the server will attempt to bind to the
 specified IP address.
 
 .TP
+.B \-\-native\-scrollback
+Send the remote terminal byte stream in order so the local terminal can retain
+scrollback and handle application screen switches. Both endpoints must support
+this option. Local predictive echo and on-screen Mosh status messages are
+disabled. A slow or disconnected client applies backpressure to remote output.
+The normal Mosh escape key and reconnection mechanism remain available.
+
+.TP
 .B \-\-no\-init
 Do not send the \fBsmcup\fP initialization string and \fBrmcup\fP
 deinitialization string to the client's terminal. On many terminals
